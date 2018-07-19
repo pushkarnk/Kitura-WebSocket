@@ -20,7 +20,6 @@ import LoggerAPI
 @testable import KituraWebSocket
 @testable import KituraNIO
 import Cryptor
-import Socket
 import NIO
 import NIOHTTP1
 
@@ -45,11 +44,14 @@ class KituraTest: XCTestCase {
     // Note: These two paths must only differ by the leading slash
     let servicePathNoSlash = "wstester"
     let servicePath = "/wstester"
-    
+
+    let httpRequestEncoder = HTTPRequestEncoder()
+    let httpResponseDecoder = HTTPResponseDecoder()    
+    var httpHandler: IncomingResponseHandler? = nil
     func performServerTest(line: Int = #line,
                            asyncTasks: (XCTestExpectation) -> Void...) {
         let server = HTTP.createServer()
-        
+        server.allowPortReuse = true 
         do {
             try server.listen(on: 8080)
         
@@ -72,31 +74,42 @@ class KituraTest: XCTestCase {
             XCTFail("Test failed. Error=\(error)")
         }
     }
-    
+   
+    class DataHandler: ChannelInboundHandler {
+        public typealias InboundIn = ByteBuffer
+
+        func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+            print(self.unwrapInboundIn(data))
+        }
+    } 
+
     func performTest(framesToSend: [(Bool, Int, NSData)],
                      expectedFrames: [(Bool, Int, NSData)], expectation: XCTestExpectation) {
-        sendUpgradeRequest(toPath: servicePath, usingKey: secWebKey, testUpgradeResponse: true, expectation: expectation)
+        let upgradeCompletionExpectation = self.expectation(description: "Upgrade successful")
+        guard let channel = sendUpgradeRequest(toPath: servicePath, usingKey: secWebKey, testUpgradeResponse: true, expectation: upgradeCompletionExpectation) else { return }
+        //waitForExpectations(timeout: 10) { error in
+            usleep(500)
+            print("sending")
+            try! channel.pipeline.remove(handler: httpRequestEncoder)
+            try! channel.pipeline.remove(handler: httpResponseDecoder)
+            try! channel.pipeline.remove(handler: httpHandler!)
+            try! channel.pipeline.add(handler: DataHandler(), first: true).wait()
+            for frameToSend in framesToSend {
+                let (finalToSend, opCodeToSend, payloadToSend) = frameToSend
+                try! self.sendFrame(final: finalToSend, withOpcode: opCodeToSend, withPayload: payloadToSend, on: channel)
+            }
+            print("sent") 
+            /*var position = 0
+            for expectedFrame in expectedFrames {
+                let (final, opCode, payload, updatedPosition) = parseFrame(using: buffer, position: position, from: socket)
+                position = updatedPosition
         
-        /*for frameToSend in framesToSend {
-            let (finalToSend, opCodeToSend, payloadToSend) = frameToSend
-            sendFrame(final: finalToSend, withOpcode: opCodeToSend, withPayload: payloadToSend, on: socket)
-        }
-        
-        var position = 0
-        for expectedFrame in expectedFrames {
-            let (final, opCode, payload, updatedPosition) = parseFrame(using: buffer, position: position, from: socket)
-            position = updatedPosition
-        
-            let (expectedFinal, expectedOpCode, expectedPayload) = expectedFrame
-            XCTAssertEqual(final, expectedFinal, "Expected message was\(expectedFinal ? "n't" : "") final")
-            XCTAssertEqual(opCode, expectedOpCode, "Opcode wasn't \(expectedOpCode). It was \(opCode)")
-            XCTAssertEqual(expectedPayload, payload, "The payload [\(payload)] doesn't equal the expected [\(expectedPayload)]")
-        }
-        
-        // Close the socket abruptly. Need to wait to let the close percolate up on the other side
-        socket.close()
-        usleep(150)
-        */         
+                let (expectedFinal, expectedOpCode, expectedPayload) = expectedFrame
+                XCTAssertEqual(final, expectedFinal, "Expected message was\(expectedFinal ? "n't" : "") final")
+                XCTAssertEqual(opCode, expectedOpCode, "Opcode wasn't \(expectedOpCode). It was \(opCode)")
+                XCTAssertEqual(expectedPayload, payload, "The payload [\(payload)] doesn't equal the expected [\(expectedPayload)]")
+            }*/
+        //}
     }
     
     func register(onPath: String? = nil, closeReason: WebSocketCloseReasonCode, testServerRequest: Bool = false, pingMessage: String? = nil) {
@@ -104,12 +117,15 @@ class KituraTest: XCTestCase {
         WebSocket.register(service: service, onPath: onPath ?? servicePath)
     }
     
-    func sendUpgradeRequest(forProtocolVersion: String? = "13", toPath: String, usingKey: String?, testUpgradeResponse: Bool = false, testUpgradeFailure: Bool = false, expectation: XCTestExpectation) {
-
+    func sendUpgradeRequest(forProtocolVersion: String? = "13", toPath: String, usingKey: String?, testUpgradeResponse: Bool = false, testUpgradeFailure: Bool = false, expectation: XCTestExpectation) -> Channel? {
+        self.httpHandler = IncomingResponseHandler(testSuccess: true, key: usingKey!, expectation: expectation)
         let clientBootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup(numberOfThreads: 1))
+            .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEPORT), value: 1)
             .channelInitializer { channel in
-                channel.pipeline.addHTTPClientHandlers().then {
-                    channel.pipeline.add(handler: IncomingResponseHandler(testSuccess: true, key: usingKey!, expectation: expectation))
+                channel.pipeline.add(handler: self.httpRequestEncoder).then {
+                    channel.pipeline.add(handler: self.httpResponseDecoder).then {
+                        channel.pipeline.add(handler: self.httpHandler!)
+                    }
                 }
             }
 
@@ -129,8 +145,10 @@ class KituraTest: XCTestCase {
             request.headers = headers
             channel.write(NIOAny(HTTPClientRequestPart.head(request)), promise: nil) 
             try! channel.writeAndFlush(NIOAny(HTTPClientRequestPart.end(nil))).wait()
+            return channel
         } catch {
             XCTFail("Sending the upgrade request failed")
+            return nil
         }
     } 
 

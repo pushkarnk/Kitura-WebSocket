@@ -20,6 +20,7 @@ import XCTest
 @testable import KituraWebSocket
 import LoggerAPI
 import Socket
+import NIO
 
 import Foundation
 #if os(Linux)
@@ -156,12 +157,12 @@ extension KituraTest {
         return (length, position+bytesConsumed)
     }
     
-    func sendFrame(final: Bool, withOpcode: Int, withMasking: Bool=true, withPayload: NSData, on: Socket) {
-        let buffer = NSMutableData()
+    func sendFrame(final: Bool, withOpcode: Int, withMasking: Bool=true, withPayload: NSData, on channel: Channel) {
+        var buffer = channel.allocator.buffer(capacity: 8) 
         
-        createFrameHeader(final: final, withOpcode: withOpcode, withMasking: withMasking,
-                          payloadLength: withPayload.length, buffer: buffer)
-        
+        var header = createFrameHeader(final: final, withOpcode: withOpcode, withMasking: withMasking,
+                          payloadLength: withPayload.length, channel: channel)
+        buffer.write(buffer: &header) 
         var intMask: UInt32
             
         #if os(Linux)
@@ -175,25 +176,27 @@ extension KituraTest {
         #else
         UnsafeMutableRawPointer(mutating: mask).copyBytes(from: &intMask, count: mask.count)
         #endif
-        buffer.append(&mask, length: mask.count)
+        buffer.write(bytes: mask)
         
         let payloadBytes = withPayload.bytes.bindMemory(to: UInt8.self, capacity: withPayload.length)
         
         for i in 0 ..< withPayload.length {
-            var byte = payloadBytes[i] ^ mask[i % 4]
-            buffer.append(&byte, length: 1)
+            var bytes = [UInt8](repeating: 0, count: 1) 
+            bytes[0] = payloadBytes[i] ^ mask[i % 4]
+            buffer.write(bytes: bytes)
         }
         
         do {
-            try on.write(from: buffer)
+            try channel.writeAndFlush(buffer).wait() 
         }
         catch {
             XCTFail("Failed to send a frame. Error=\(error)")
         }
     }
     
-    private func createFrameHeader(final: Bool, withOpcode: Int, withMasking: Bool, payloadLength: Int, buffer: NSMutableData) {
-        
+    private func createFrameHeader(final: Bool, withOpcode: Int, withMasking: Bool, payloadLength: Int, channel: Channel) -> ByteBuffer {
+       
+        var buffer = channel.allocator.buffer(capacity: 8) 
         var bytes: [UInt8] = [(final ? 0x80 : 0x00) | UInt8(withOpcode), 0, 0,0,0,0,0,0,0,0]
         var length = 1
         
@@ -236,6 +239,7 @@ extension KituraTest {
         if withMasking {
             bytes[1] |= 0x80
         }
-        buffer.append(bytes, length: length)
+        buffer.write(bytes: bytes)
+        return buffer
     }
 }
