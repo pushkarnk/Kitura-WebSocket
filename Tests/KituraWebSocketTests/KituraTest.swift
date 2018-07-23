@@ -22,6 +22,7 @@ import LoggerAPI
 import Cryptor
 import NIO
 import NIOHTTP1
+import NIOWebSocket
 
 import Foundation
 import Dispatch
@@ -76,10 +77,60 @@ class KituraTest: XCTestCase {
     }
    
     class DataHandler: ChannelInboundHandler {
+
         public typealias InboundIn = ByteBuffer
 
+        let numberOfFramesExpected: Int
+ 
+        let expectedFrames: [(Bool, Int, Data)]
+
+        var currentFramePayload: [UInt8] = []
+        
+        var currentFrameLength: Int
+
+        var currentFrameOpcode: Int
+
+        var currentFrameFinal: Bool = false
+
+        var frameNumber: Int = 0
+
+        var firstFragment: Bool = false
+
+        init(expectedFrames: [(Bool, Int, NSData)] {
+            self.numberOfFramesExpected = expectedFrames.count
+            self.expectedFrames = expectedFrames.map { $0.0, $0.1, Data(referencing: $0.2) }
+        }
+
         func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
-            print(self.unwrapInboundIn(data))
+            var buffer = self.unwrapInboundIn(data)
+            if firstFragment {
+               currentFrameOpcode = getFrameOpcode(from: buffer)
+               currentFrameLength = getFrameLength(from: buffer)
+               currentFrameFinal  = getFrameFinal(from: buffer)
+               currentFramePayload.append(buffer.readBytes(length: buffer.readableBytes))
+               firstFragment.toggle()
+            } else {
+                currentPayload.append(buffer.readBytes(length: buffer.readableBytes))
+            }
+            
+            if currentPayload.length == currentFrameLength {
+                compareFrames(frameNumber, currentFrameFinal, currentFrameOpcode, currentFramePayload)
+                frameNumber += 1
+                firstFragment.toggle()
+            }
+        }
+
+        func getFrameOpcode(buffer: ByteBuffer) {
+        }
+
+        func getFrameLength(buffer: ByteBuffer) {
+        }
+
+        func comapreFrames(_ frameNumber: Int, _ currentFrameFinal: Bool, _ currentFrameOpcode: Int, _ currentFramePayload: [UInt8]) {
+            let (expectedFinal, expectedOpCode, expectedPayload) = expectedFrame[frameNumber]
+            XCTAssertEqual(currentFrameFinal, expectedFinal, "Expected message was\(expectedFinal ? "n't" : "") final")
+            XCTAssertEqual(currentFrameOpCode, expectedOpCode, "Opcode wasn't \(expectedOpCode). It was \(currentFrameOpcode)")
+            XCTAssertEqual(expectedPayload, payload, "The payload [\(payload)] doesn't equal the expected [\(expectedPayload)]")
         }
     } 
 
@@ -87,29 +138,15 @@ class KituraTest: XCTestCase {
                      expectedFrames: [(Bool, Int, NSData)], expectation: XCTestExpectation) {
         let upgradeCompletionExpectation = self.expectation(description: "Upgrade successful")
         guard let channel = sendUpgradeRequest(toPath: servicePath, usingKey: secWebKey, testUpgradeResponse: true, expectation: upgradeCompletionExpectation) else { return }
-        //waitForExpectations(timeout: 10) { error in
-            usleep(500)
-            print("sending")
-            try! channel.pipeline.remove(handler: httpRequestEncoder)
-            try! channel.pipeline.remove(handler: httpResponseDecoder)
-            try! channel.pipeline.remove(handler: httpHandler!)
-            try! channel.pipeline.add(handler: DataHandler(), first: true).wait()
-            for frameToSend in framesToSend {
-                let (finalToSend, opCodeToSend, payloadToSend) = frameToSend
-                try! self.sendFrame(final: finalToSend, withOpcode: opCodeToSend, withPayload: payloadToSend, on: channel)
-            }
-            print("sent") 
-            /*var position = 0
-            for expectedFrame in expectedFrames {
-                let (final, opCode, payload, updatedPosition) = parseFrame(using: buffer, position: position, from: socket)
-                position = updatedPosition
-        
-                let (expectedFinal, expectedOpCode, expectedPayload) = expectedFrame
-                XCTAssertEqual(final, expectedFinal, "Expected message was\(expectedFinal ? "n't" : "") final")
-                XCTAssertEqual(opCode, expectedOpCode, "Opcode wasn't \(expectedOpCode). It was \(opCode)")
-                XCTAssertEqual(expectedPayload, payload, "The payload [\(payload)] doesn't equal the expected [\(expectedPayload)]")
-            }*/
-        //}
+        usleep(500)
+        try! channel.pipeline.remove(handler: httpRequestEncoder)
+        try! channel.pipeline.remove(handler: httpResponseDecoder)
+        try! channel.pipeline.remove(handler: httpHandler!)
+        try! channel.pipeline.add(handler: DataHandler(expectedFrames: expectedFrames), first: true).wait()
+        for frameToSend in framesToSend {
+            let (finalToSend, opCodeToSend, payloadToSend) = frameToSend 
+            try! self.sendFrame(final: finalToSend, withOpcode: opCodeToSend, withPayload: payloadToSend, on: channel)
+        }
     }
     
     func register(onPath: String? = nil, closeReason: WebSocketCloseReasonCode, testServerRequest: Bool = false, pingMessage: String? = nil) {
@@ -204,4 +241,10 @@ class IncomingResponseHandler: ChannelInboundHandler {
         default: break
         }
     }   
+}
+
+extension Bool {
+    mutating func toggle() {
+        self = !self
+    }
 }

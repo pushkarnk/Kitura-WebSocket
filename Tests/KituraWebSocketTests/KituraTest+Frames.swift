@@ -162,6 +162,8 @@ extension KituraTest {
         
         var header = createFrameHeader(final: final, withOpcode: withOpcode, withMasking: withMasking,
                           payloadLength: withPayload.length, channel: channel)
+        print("header length = \(header.readableBytes)")
+
         buffer.write(buffer: &header) 
         var intMask: UInt32
             
@@ -185,8 +187,9 @@ extension KituraTest {
             bytes[0] = payloadBytes[i] ^ mask[i % 4]
             buffer.write(bytes: bytes)
         }
-        
         do {
+            print("payload length = \(withPayload.length)")
+            print("buffer length = \(buffer.readableBytes)")
             try channel.writeAndFlush(buffer).wait() 
         }
         catch {
@@ -204,7 +207,6 @@ extension KituraTest {
             bytes[1] = UInt8(payloadLength)
             length += 1
         } else if payloadLength <= Int(UInt16.max) {
-            bytes[1] = 126
             let tempPayloadLengh = UInt16(payloadLength)
             var payloadLengthUInt16: UInt16
             #if os(Linux)
@@ -220,6 +222,7 @@ extension KituraTest {
             #endif
             length += 3
         } else {
+            print("> 127")
             bytes[1] = 127
             let tempPayloadLengh = UInt32(payloadLength)
             var payloadLengthUInt32: UInt32
@@ -234,7 +237,7 @@ extension KituraTest {
             #else
             (UnsafeMutableRawPointer(mutating: bytes)+length+5).copyBytes(from: asBytes, count: 4)
             #endif
-            length += 9
+            length += 9 
         }
         if withMasking {
             bytes[1] |= 0x80

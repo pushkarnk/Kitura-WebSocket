@@ -95,8 +95,8 @@ extension WebSocketConnection: ChannelInboundHandler {
     }
 
     public func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+        print("server channel read")
         let frame = self.unwrapInboundIn(data)
-
         switch frame.opcode {
             case .text:
                 guard messageState == .unknown else {
@@ -190,6 +190,10 @@ extension WebSocketConnection: ChannelInboundHandler {
                 break
 
         } 
+    }
+
+    public func errorCaught(ctx: ChannelHandlerContext, error: Error) {
+        print("errorCaught \(error)")
     }
 
     private func unmaskedData(frame: WebSocketFrame) -> ByteBuffer {
