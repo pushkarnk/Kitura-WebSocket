@@ -25,7 +25,8 @@ class BasicTests: KituraTest {
     
     static var allTests: [(String, (BasicTests) -> () throws -> Void)] {
         return [
-            ("testBinaryLongMessage", testBinaryLongMessage),
+            //("testBinaryLongMessage", testBinaryLongMessage),
+            ("testBinaryMediumMessage", testBinaryMediumMessage),
         ]
     }
     
@@ -46,4 +47,21 @@ class BasicTests: KituraTest {
                              expectation: expectation)
         }
     }
+
+    func testBinaryMediumMessage() {
+        register(closeReason: .noReasonCodeSent)
+    
+        performServerTest() { expectation in
+    
+            var bytes = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e]
+            let binaryPayload = NSMutableData(bytes: &bytes, length: bytes.count)
+            repeat {
+                binaryPayload.append(binaryPayload.bytes, length: binaryPayload.length)
+            } while binaryPayload.length < 1000
+    
+            self.performTest(framesToSend: [(true, self.opcodeBinary, binaryPayload)],
+                             expectedFrames: [(true, self.opcodeBinary, binaryPayload)],
+                             expectation: expectation)
+        }   
+    }   
 }

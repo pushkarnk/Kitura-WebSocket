@@ -16,10 +16,8 @@
 
 import XCTest
 
-
 @testable import KituraWebSocket
 import LoggerAPI
-import Socket
 import NIO
 
 import Foundation
@@ -36,133 +34,11 @@ extension KituraTest {
     var opcodePong: Int { return 10 }
     var opcodeText: Int { return 1 }
     
-    func payload(closeReasonCode: WebSocketCloseReasonCode) -> NSData {
-        var tempReasonCodeToSend = UInt16(closeReasonCode.code())
-        var reasonCodeToSend: UInt16
-        #if os(Linux)
-            reasonCodeToSend = Glibc.htons(tempReasonCodeToSend)
-        #else
-            reasonCodeToSend = CFSwapInt16HostToBig(tempReasonCodeToSend)
-        #endif
-        
-        let payload = NSMutableData()
-        let asBytes = UnsafeMutablePointer(&reasonCodeToSend)
-        payload.append(asBytes, length: 2)
-        
-        return payload
-    }
-    
-    func payload(text: String) -> NSData {
-        let result = NSMutableData()
-        
-        let utf8Length = text.lengthOfBytes(using: .utf8)
-        var utf8: [CChar] = Array<CChar>(repeating: 0, count: utf8Length + 10) // A little bit of padding
-        guard text.getCString(&utf8, maxLength: utf8Length + 10, encoding: .utf8)  else {
-            return result
-        }
-        
-        result.append(&utf8, length: utf8Length)
-        
-        return result
-    }
-    
-    func parseFrame(using: NSMutableData, position: Int, from: Socket) -> (Bool, Int, NSData, Int) {
-        var final = false
-        var opcode = -1
-        let payload = NSMutableData()
-        var payloadLength = -1
-        var updatedPosition = position
-        
-        var parsingFrame = true
-        
-        while parsingFrame {
-            updatedPosition = position
-            payload.length = 0
-            
-            (final, opcode, updatedPosition) = parseFrameOpcode(using: using, position: updatedPosition)
-            if opcode != -1 {
-                
-                (payloadLength, updatedPosition) = parseFrameLength(using: using, position: updatedPosition)
-                if payloadLength != -1 {
-                
-                    if using.length >= updatedPosition+payloadLength {
-                        payload.append(using.bytes+updatedPosition, length: payloadLength)
-                        parsingFrame = false
-                        updatedPosition += payloadLength
-                    }
-                }
-            }
-            
-            if parsingFrame {
-                do {
-                    let bytesRead = try from.read(into: using)
-                    if bytesRead == 0 {
-                        parsingFrame = false
-                        opcode = -1
-                    }
-                }
-                catch {
-                    XCTFail("Reading of WebSocket message from WebService failed. Error=\(error)")
-                }
-            }
-        
-        }
-        
-        return (final, opcode, payload, updatedPosition)
-    }
-    
-    private func parseFrameOpcode(using: NSMutableData, position: Int) -> (Bool, Int, Int) {
-        guard using.length > position else { return (false, -1, position) }
-        
-        let byte = (using.bytes.bindMemory(to: UInt8.self, capacity: 1)+position)[0]
-        return ((byte & 0x80) != 0, Int(byte & 0x7f), position+1)
-    }
-    
-    private func parseFrameLength(using: NSMutableData, position: Int) -> (Int, Int) {
-        guard position < using.length else {
-            return (-1, position)
-        }
-        
-        let byte = (using.bytes.bindMemory(to: UInt8.self, capacity: 1)+position)[0]
-        if byte & 0x80 != 0 {
-            XCTFail("The server isn't suppose to send masked frames")
-        }
-        var length = Int(byte)
-        var bytesConsumed = 1
-        if length == 126 {
-            guard position+2 < using.length else { return (-1, position+1) }
-            
-            let networkOrderedUInt16 = UnsafeRawPointer(using.bytes+position+1).assumingMemoryBound(to: UInt16.self)[0]
-            
-            #if os(Linux)
-                length = Int(Glibc.ntohs(networkOrderedUInt16))
-            #else
-                length = Int(CFSwapInt16BigToHost(networkOrderedUInt16))
-            #endif
-            bytesConsumed += 2
-        }
-        else if length == 127 {
-            guard position+8 < using.length else { return (-1, position+1) }
-            
-            let networkOrderedUInt32 = UnsafeRawPointer(using.bytes+position+5).assumingMemoryBound(to: UInt32.self)[0]
-            
-            #if os(Linux)
-                length = Int(Glibc.ntohl(networkOrderedUInt32))
-            #else
-                length = Int(CFSwapInt32BigToHost(networkOrderedUInt32))
-            #endif
-            bytesConsumed += 8
-        }
-        
-        return (length, position+bytesConsumed)
-    }
-    
     func sendFrame(final: Bool, withOpcode: Int, withMasking: Bool=true, withPayload: NSData, on channel: Channel) {
         var buffer = channel.allocator.buffer(capacity: 8) 
         
         var header = createFrameHeader(final: final, withOpcode: withOpcode, withMasking: withMasking,
                           payloadLength: withPayload.length, channel: channel)
-        print("header length = \(header.readableBytes)")
 
         buffer.write(buffer: &header) 
         var intMask: UInt32
@@ -178,8 +54,9 @@ extension KituraTest {
         #else
         UnsafeMutableRawPointer(mutating: mask).copyBytes(from: &intMask, count: mask.count)
         #endif
+        print("mask", mask)
         buffer.write(bytes: mask)
-        
+        print("wrote mask", buffer.getBytes(at: 0, length: buffer.readableBytes))
         let payloadBytes = withPayload.bytes.bindMemory(to: UInt8.self, capacity: withPayload.length)
         
         for i in 0 ..< withPayload.length {
@@ -188,8 +65,7 @@ extension KituraTest {
             buffer.write(bytes: bytes)
         }
         do {
-            print("payload length = \(withPayload.length)")
-            print("buffer length = \(buffer.readableBytes)")
+            print(buffer.getBytes(at: 0, length: 20))
             try channel.writeAndFlush(buffer).wait() 
         }
         catch {
@@ -206,7 +82,9 @@ extension KituraTest {
         if payloadLength < 126 {
             bytes[1] = UInt8(payloadLength)
             length += 1
+            bytes = Array(bytes[0...1])
         } else if payloadLength <= Int(UInt16.max) {
+            bytes[1] = 126
             let tempPayloadLengh = UInt16(payloadLength)
             var payloadLengthUInt16: UInt16
             #if os(Linux)
@@ -221,8 +99,8 @@ extension KituraTest {
             (UnsafeMutableRawPointer(mutating: bytes)+length+1).copyBytes(from: asBytes, count: 2)
             #endif
             length += 3
+            bytes = Array(bytes[0...3])
         } else {
-            print("> 127")
             bytes[1] = 127
             let tempPayloadLengh = UInt32(payloadLength)
             var payloadLengthUInt32: UInt32
@@ -244,5 +122,109 @@ extension KituraTest {
         }
         buffer.write(bytes: bytes)
         return buffer
+    }
+}
+
+class WebSocketClientHandler: ChannelInboundHandler {
+
+    public typealias InboundIn = ByteBuffer
+
+    let numberOfFramesExpected: Int
+
+    let expectedFrames: [(Bool, Int, NSData)]
+
+    var currentFramePayload: [UInt8] = []
+    
+    var currentFrameLength: Int = 0
+
+    var currentFrameOpcode: Int = -1
+
+    var currentFrameFinal: Bool = false
+
+    var frameNumber: Int = 0
+
+    var firstFragment: Bool = true 
+
+    var expectation: XCTestExpectation
+
+    init(expectedFrames: [(Bool, Int, NSData)], expectation: XCTestExpectation) {
+        self.numberOfFramesExpected = expectedFrames.count
+        self.expectedFrames = expectedFrames
+        self.expectation = expectation
+    }
+
+    func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+        var buffer = self.unwrapInboundIn(data)
+        if firstFragment {
+           var numberOfBytesRead = 0
+           guard let firstByte =  buffer.readBytes(length: 1)?[0] else {
+               XCTFail("Received empty data from the server")
+               return
+           }
+           (currentFrameFinal, currentFrameOpcode) = getFrameFinalAndOpcode(from: firstByte)
+           (currentFrameLength, numberOfBytesRead) = getFrameLength(from: buffer)
+           _ = buffer.readBytes(length: numberOfBytesRead)
+           currentFramePayload += buffer.readBytes(length: buffer.readableBytes) ?? []
+           firstFragment.toggle()
+        } else {
+            currentFramePayload += buffer.readBytes(length: buffer.readableBytes) ?? []
+        }
+        if currentFramePayload.count == currentFrameLength {
+            let currentFramePayloadPtr = UnsafeBufferPointer(start: &currentFramePayload, count: currentFramePayload.count)
+            let currentPayloadData = NSData(data: Data(buffer: currentFramePayloadPtr))
+            compareFrames(frameNumber, currentFrameFinal, currentFrameOpcode, currentPayloadData)
+            frameNumber += 1
+            firstFragment.toggle()
+            currentFramePayload = []
+            if frameNumber == numberOfFramesExpected {
+                expectation.fulfill()
+            }
+        }
+    }
+
+    func getFrameFinalAndOpcode(from byte: UInt8) -> (Bool, Int) {
+        return (byte & 0x80 != 0, Int(byte & 0x7f))
+    }
+
+    func getFrameLength(from buffer: ByteBuffer) -> (Int, Int) {
+        let onFailure = (-1, 0)
+        var position = buffer.readerIndex
+        var numberOfBytesConsumed = 0
+        guard let payloadLen = buffer.getBytes(at: position, length: 1)?[0] else {
+            XCTFail("Payload length not received")
+            return onFailure
+        }
+        guard payloadLen & 0x80 == 0 else {
+            XCTFail("The server isn't suppose to send masked frames")
+            return onFailure
+        }
+        position += 1
+        numberOfBytesConsumed += 1
+        var length = Int(payloadLen)
+        if length == 126 {
+            guard let networkOrderedUInt16 = buffer.getInteger(at: position, endianness: .big, as: UInt16.self) else {
+                XCTFail("Payload length not received")
+                return onFailure
+            }
+            length = Int(networkOrderedUInt16)
+            position += 2
+            numberOfBytesConsumed += 2
+        } else if length == 127 {
+            position += 4
+            guard let networkOrderedUInt32 = buffer.getInteger(at: position, endianness: .big, as: UInt32.self) else {
+                XCTFail("Payload length not received")
+                return onFailure
+            }
+            length = Int(networkOrderedUInt32)
+            numberOfBytesConsumed += 8
+        }    
+        return (length, numberOfBytesConsumed)
+    }
+
+    func compareFrames(_ frameNumber: Int, _ currentFrameFinal: Bool, _ currentFrameOpcode: Int, _ currentFramePayload: NSData) {
+        let (expectedFinal, expectedOpCode, expectedPayload) = expectedFrames[frameNumber]
+        XCTAssertEqual(currentFrameFinal, expectedFinal, "Expected message was\(expectedFinal ? "n't" : "") final")
+        XCTAssertEqual(currentFrameOpcode, expectedOpCode, "Opcode wasn't \(expectedOpCode). It was \(currentFrameOpcode)")
+        XCTAssertEqual(currentFramePayload, expectedPayload, "The payload [\(currentFramePayload)] doesn't equal the expected [\(expectedPayload)]")
     }
 }

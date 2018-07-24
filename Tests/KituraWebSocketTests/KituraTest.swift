@@ -23,7 +23,6 @@ import Cryptor
 import NIO
 import NIOHTTP1
 import NIOWebSocket
-
 import Foundation
 import Dispatch
 
@@ -47,8 +46,11 @@ class KituraTest: XCTestCase {
     let servicePath = "/wstester"
 
     let httpRequestEncoder = HTTPRequestEncoder()
+
     let httpResponseDecoder = HTTPResponseDecoder()    
-    var httpHandler: IncomingResponseHandler? = nil
+
+    var httpHandler: HTTPResponseHandler? = nil
+
     func performServerTest(line: Int = #line,
                            asyncTasks: (XCTestExpectation) -> Void...) {
         let server = HTTP.createServer()
@@ -76,76 +78,18 @@ class KituraTest: XCTestCase {
         }
     }
    
-    class DataHandler: ChannelInboundHandler {
-
-        public typealias InboundIn = ByteBuffer
-
-        let numberOfFramesExpected: Int
- 
-        let expectedFrames: [(Bool, Int, Data)]
-
-        var currentFramePayload: [UInt8] = []
-        
-        var currentFrameLength: Int
-
-        var currentFrameOpcode: Int
-
-        var currentFrameFinal: Bool = false
-
-        var frameNumber: Int = 0
-
-        var firstFragment: Bool = false
-
-        init(expectedFrames: [(Bool, Int, NSData)] {
-            self.numberOfFramesExpected = expectedFrames.count
-            self.expectedFrames = expectedFrames.map { $0.0, $0.1, Data(referencing: $0.2) }
-        }
-
-        func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
-            var buffer = self.unwrapInboundIn(data)
-            if firstFragment {
-               currentFrameOpcode = getFrameOpcode(from: buffer)
-               currentFrameLength = getFrameLength(from: buffer)
-               currentFrameFinal  = getFrameFinal(from: buffer)
-               currentFramePayload.append(buffer.readBytes(length: buffer.readableBytes))
-               firstFragment.toggle()
-            } else {
-                currentPayload.append(buffer.readBytes(length: buffer.readableBytes))
-            }
-            
-            if currentPayload.length == currentFrameLength {
-                compareFrames(frameNumber, currentFrameFinal, currentFrameOpcode, currentFramePayload)
-                frameNumber += 1
-                firstFragment.toggle()
-            }
-        }
-
-        func getFrameOpcode(buffer: ByteBuffer) {
-        }
-
-        func getFrameLength(buffer: ByteBuffer) {
-        }
-
-        func comapreFrames(_ frameNumber: Int, _ currentFrameFinal: Bool, _ currentFrameOpcode: Int, _ currentFramePayload: [UInt8]) {
-            let (expectedFinal, expectedOpCode, expectedPayload) = expectedFrame[frameNumber]
-            XCTAssertEqual(currentFrameFinal, expectedFinal, "Expected message was\(expectedFinal ? "n't" : "") final")
-            XCTAssertEqual(currentFrameOpCode, expectedOpCode, "Opcode wasn't \(expectedOpCode). It was \(currentFrameOpcode)")
-            XCTAssertEqual(expectedPayload, payload, "The payload [\(payload)] doesn't equal the expected [\(expectedPayload)]")
-        }
-    } 
-
     func performTest(framesToSend: [(Bool, Int, NSData)],
                      expectedFrames: [(Bool, Int, NSData)], expectation: XCTestExpectation) {
-        let upgradeCompletionExpectation = self.expectation(description: "Upgrade successful")
-        guard let channel = sendUpgradeRequest(toPath: servicePath, usingKey: secWebKey, testUpgradeResponse: true, expectation: upgradeCompletionExpectation) else { return }
-        usleep(500)
-        try! channel.pipeline.remove(handler: httpRequestEncoder)
-        try! channel.pipeline.remove(handler: httpResponseDecoder)
-        try! channel.pipeline.remove(handler: httpHandler!)
-        try! channel.pipeline.add(handler: DataHandler(expectedFrames: expectedFrames), first: true).wait()
+        let upgraded = DispatchSemaphore(value: 0)
+        guard let channel = sendUpgradeRequest(toPath: servicePath, usingKey: secWebKey, semaphore: upgraded) else { return }
+        upgraded.wait()
+        _ = try! channel.pipeline.remove(handler: httpRequestEncoder).wait()
+        _ = try! channel.pipeline.remove(handler: httpResponseDecoder).wait()
+        _ = try! channel.pipeline.remove(handler: httpHandler!).wait()
+        try! channel.pipeline.add(handler: WebSocketClientHandler(expectedFrames: expectedFrames, expectation: expectation), first: true).wait()
         for frameToSend in framesToSend {
             let (finalToSend, opCodeToSend, payloadToSend) = frameToSend 
-            try! self.sendFrame(final: finalToSend, withOpcode: opCodeToSend, withPayload: payloadToSend, on: channel)
+            self.sendFrame(final: finalToSend, withOpcode: opCodeToSend, withPayload: payloadToSend, on: channel)
         }
     }
     
@@ -154,8 +98,8 @@ class KituraTest: XCTestCase {
         WebSocket.register(service: service, onPath: onPath ?? servicePath)
     }
     
-    func sendUpgradeRequest(forProtocolVersion: String? = "13", toPath: String, usingKey: String?, testUpgradeResponse: Bool = false, testUpgradeFailure: Bool = false, expectation: XCTestExpectation) -> Channel? {
-        self.httpHandler = IncomingResponseHandler(testSuccess: true, key: usingKey!, expectation: expectation)
+    func sendUpgradeRequest(forProtocolVersion: String? = "13", toPath: String, usingKey: String?, semaphore: DispatchSemaphore) -> Channel? {
+        self.httpHandler = HTTPResponseHandler(testSuccess: true, key: usingKey!, semaphore: semaphore)
         let clientBootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup(numberOfThreads: 1))
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEPORT), value: 1)
             .channelInitializer { channel in
@@ -190,8 +134,8 @@ class KituraTest: XCTestCase {
     } 
 
     static func checkUpgradeResponse(_ httpStatusCode: HTTPStatusCode, _ secWebAccept: String, _ forKey: String) {
-        
-        XCTAssertEqual(httpStatusCode, HTTPStatusCode.switchingProtocols, "Returned status code on upgrade request was \(httpStatusCode) and not \(HTTPStatusCode.switchingProtocols)")
+        XCTAssertEqual(httpStatusCode, HTTPStatusCode.switchingProtocols, 
+                       "Returned status code on upgrade request was \(httpStatusCode) and not \(HTTPStatusCode.switchingProtocols)")
         
         let sha1 = Digest(using: .sha1)
         let key: String = forKey + KituraTest.wsGUID
@@ -208,7 +152,7 @@ class KituraTest: XCTestCase {
     }
 }
 
-class IncomingResponseHandler: ChannelInboundHandler {
+class HTTPResponseHandler: ChannelInboundHandler {
 
     public typealias InboundIn = HTTPClientResponsePart
 
@@ -216,15 +160,15 @@ class IncomingResponseHandler: ChannelInboundHandler {
 
     let testSuccess: Bool
 
-    let expectation: XCTestExpectation
-
     let key: String
 
-    public init(testSuccess: Bool = false, testFailure: Bool = false, key: String, expectation: XCTestExpectation) {
-        self.expectation = expectation
+    let upgradeDone: DispatchSemaphore
+
+    public init(testSuccess: Bool = false, testFailure: Bool = false, key: String, semaphore: DispatchSemaphore) {
         self.testSuccess = testSuccess
         self.testFailure = testFailure
         self.key = key
+        self.upgradeDone = semaphore
     }
 
     func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
@@ -236,7 +180,7 @@ class IncomingResponseHandler: ChannelInboundHandler {
             let secWebSocketAccept = header.headers["Sec-WebSocket-Accept"]
             if testSuccess {
                 KituraTest.checkUpgradeResponse(statusCode, secWebSocketAccept[0], key)
-                expectation.fulfill()
+                upgradeDone.signal()
             }
         default: break
         }

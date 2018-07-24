@@ -95,7 +95,6 @@ extension WebSocketConnection: ChannelInboundHandler {
     }
 
     public func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
-        print("server channel read")
         let frame = self.unwrapInboundIn(data)
         switch frame.opcode {
             case .text:
@@ -121,11 +120,13 @@ extension WebSocketConnection: ChannelInboundHandler {
                 }
 
                 if frame.fin {
-                    fireReceivedData(data: frame.data.getData(at: 0, length: frame.data.readableBytes) ?? Data())
+                    print("firing from here")
+                    fireReceivedData(data: frame.unmaskedData.getData(at: 0, length: frame.unmaskedData.readableBytes) ?? Data())
                 } else {
-                    var buffer = frame.data
+                    message =  ctx.channel.allocator.buffer(capacity: frame.unmaskedData.readableBytes)
+                    var data = frame.unmaskedData
+                    message.write(buffer: &data)
                     messageState = .binary
-                    message.write(buffer: &buffer)
                 }
   
             case .continuation:
@@ -134,12 +135,12 @@ extension WebSocketConnection: ChannelInboundHandler {
                     return
                 }
       
-                var buffer = frame.data 
+                var buffer = frame.unmaskedData 
                 message.write(buffer: &buffer)
                 if frame.fin {
                     switch messageState {
                     case .binary:
-                        fireReceivedData(data: frame.data.getData(at: 0, length: frame.data.readableBytes) ?? Data())
+                        fireReceivedData(data: message.getData(at: 0, length: message.readableBytes) ?? Data())
                     case .text:
                         fireReceivedString(message: frame.data.getString(at: 0, length: frame.data.readableBytes) ?? "") 
                     case .unknown: //not possible
