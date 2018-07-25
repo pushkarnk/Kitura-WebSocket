@@ -26,14 +26,14 @@ class ComplexTests: KituraTest {
         return [
             ("testBinaryShortAndMediumFrames", testBinaryShortAndMediumFrames),
             ("testBinaryTwoShortFrames", testBinaryTwoShortFrames),
-            //("testPingBetweenBinaryFrames", testPingBetweenBinaryFrames),
-            //("testPingBetweenTextFrames", testPingBetweenTextFrames),
-            //("testTextShortAndMediumFrames", testTextShortAndMediumFrames),
-            //("testTextTwoShortFrames", testTextTwoShortFrames)
+            ("testPingBetweenBinaryFrames", testPingBetweenBinaryFrames),
+            ("testPingBetweenTextFrames", testPingBetweenTextFrames),
+            ("testTextShortAndMediumFrames", testTextShortAndMediumFrames),
+            ("testTextTwoShortFrames", testTextTwoShortFrames)
         ]
     }
     
-        func testBinaryShortAndMediumFrames() {
+    func testBinaryShortAndMediumFrames() {
         register(closeReason: .noReasonCodeSent)
         
         performServerTest() { expectation in

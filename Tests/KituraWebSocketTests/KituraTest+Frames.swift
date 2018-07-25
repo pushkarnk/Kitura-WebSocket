@@ -182,6 +182,11 @@ class WebSocketClientHandler: ChannelInboundHandler {
 
     func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
         var buffer = self.unwrapInboundIn(data)
+        decodeFrame(from: buffer)
+    }
+
+    private func decodeFrame(from data: ByteBuffer) {
+        var buffer = data
         if firstFragment {
            var numberOfBytesRead = 0
            guard let firstByte =  buffer.readBytes(length: 1)?[0] else {
@@ -191,7 +196,7 @@ class WebSocketClientHandler: ChannelInboundHandler {
            (currentFrameFinal, currentFrameOpcode) = getFrameFinalAndOpcode(from: firstByte)
            (currentFrameLength, numberOfBytesRead) = getFrameLength(from: buffer)
            _ = buffer.readBytes(length: numberOfBytesRead)
-           currentFramePayload += buffer.readBytes(length: buffer.readableBytes) ?? []
+           currentFramePayload += buffer.readBytes(length: min(currentFrameLength, buffer.readableBytes)) ?? []
            firstFragment.toggle()
         } else {
             currentFramePayload += buffer.readBytes(length: buffer.readableBytes) ?? []
@@ -205,6 +210,8 @@ class WebSocketClientHandler: ChannelInboundHandler {
             currentFramePayload = []
             if frameNumber == numberOfFramesExpected {
                 expectation.fulfill()
+            } else if buffer.readableBytes > 0 {
+                decodeFrame(from: buffer)
             }
         }
     }
@@ -246,6 +253,10 @@ class WebSocketClientHandler: ChannelInboundHandler {
             numberOfBytesConsumed += 8
         }    
         return (length, numberOfBytesConsumed)
+    }
+   
+    public func errorCaught(ctx: ChannelHandlerContext, error: Error) {
+        print(error)
     }
 
     func compareFrames(_ frameNumber: Int, _ currentFrameFinal: Bool, _ currentFrameOpcode: Int, _ currentFramePayload: NSData) {

@@ -108,7 +108,8 @@ extension WebSocketConnection: ChannelInboundHandler {
                     let text = data.readString(length: data.readableBytes) ?? ""
                     fireReceivedString(message: text)
                 } else {
-                    var buffer = frame.data
+                    message =  ctx.channel.allocator.buffer(capacity: frame.unmaskedData.readableBytes)
+                    var buffer = frame.unmaskedData
                     messageState = .text
                     message.write(buffer: &buffer)
                 }
@@ -141,7 +142,7 @@ extension WebSocketConnection: ChannelInboundHandler {
                     case .binary:
                         fireReceivedData(data: message.getData(at: 0, length: message.readableBytes) ?? Data())
                     case .text:
-                        fireReceivedString(message: frame.data.getString(at: 0, length: frame.data.readableBytes) ?? "") 
+                        fireReceivedString(message: message.getString(at: 0, length: message.readableBytes) ?? "") 
                     case .unknown: //not possible
                         break
                     }
@@ -224,6 +225,7 @@ extension WebSocketConnection {
     }
 
     func sendMessage(with opcode: WebSocketOpcode, data: ByteBuffer) {
+        print(opcode, data.readableBytes)
         guard ctx.channel.isActive else { 
             //TODO: Log an error
             return
