@@ -33,6 +33,36 @@ extension KituraTest {
     var opcodePing: Int { return 9 }
     var opcodePong: Int { return 10 }
     var opcodeText: Int { return 1 }
+
+    func payload(closeReasonCode: WebSocketCloseReasonCode) -> NSData {
+        var tempReasonCodeToSend = UInt16(closeReasonCode.code())
+        var reasonCodeToSend: UInt16
+        #if os(Linux)
+            reasonCodeToSend = Glibc.htons(tempReasonCodeToSend)
+        #else
+            reasonCodeToSend = CFSwapInt16HostToBig(tempReasonCodeToSend)
+        #endif
+    
+        let payload = NSMutableData()
+        let asBytes = UnsafeMutablePointer(&reasonCodeToSend)
+        payload.append(asBytes, length: 2)
+    
+        return payload
+    }   
+    
+    func payload(text: String) -> NSData {
+        let result = NSMutableData()
+    
+        let utf8Length = text.lengthOfBytes(using: .utf8)
+        var utf8: [CChar] = Array<CChar>(repeating: 0, count: utf8Length + 10) // A little bit of padding
+        guard text.getCString(&utf8, maxLength: utf8Length + 10, encoding: .utf8)  else {
+            return result
+        }
+
+        result.append(&utf8, length: utf8Length)
+
+        return result
+    }
     
     func sendFrame(final: Bool, withOpcode: Int, withMasking: Bool=true, withPayload: NSData, on channel: Channel) {
         var buffer = channel.allocator.buffer(capacity: 8) 
@@ -54,9 +84,7 @@ extension KituraTest {
         #else
         UnsafeMutableRawPointer(mutating: mask).copyBytes(from: &intMask, count: mask.count)
         #endif
-        print("mask", mask)
         buffer.write(bytes: mask)
-        print("wrote mask", buffer.getBytes(at: 0, length: buffer.readableBytes))
         let payloadBytes = withPayload.bytes.bindMemory(to: UInt8.self, capacity: withPayload.length)
         
         for i in 0 ..< withPayload.length {
@@ -65,7 +93,6 @@ extension KituraTest {
             buffer.write(bytes: bytes)
         }
         do {
-            print(buffer.getBytes(at: 0, length: 20))
             try channel.writeAndFlush(buffer).wait() 
         }
         catch {
@@ -82,7 +109,7 @@ extension KituraTest {
         if payloadLength < 126 {
             bytes[1] = UInt8(payloadLength)
             length += 1
-            bytes = Array(bytes[0...1])
+            //bytes = Array(bytes[0...1])
         } else if payloadLength <= Int(UInt16.max) {
             bytes[1] = 126
             let tempPayloadLengh = UInt16(payloadLength)
@@ -99,7 +126,7 @@ extension KituraTest {
             (UnsafeMutableRawPointer(mutating: bytes)+length+1).copyBytes(from: asBytes, count: 2)
             #endif
             length += 3
-            bytes = Array(bytes[0...3])
+            //bytes = Array(bytes[0...3])
         } else {
             bytes[1] = 127
             let tempPayloadLengh = UInt32(payloadLength)
@@ -120,7 +147,7 @@ extension KituraTest {
         if withMasking {
             bytes[1] |= 0x80
         }
-        buffer.write(bytes: bytes)
+        buffer.write(bytes: Array(bytes[0..<length]))
         return buffer
     }
 }

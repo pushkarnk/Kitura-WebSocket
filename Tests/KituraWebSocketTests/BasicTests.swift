@@ -25,8 +25,15 @@ class BasicTests: KituraTest {
     
     static var allTests: [(String, (BasicTests) -> () throws -> Void)] {
         return [
-            //("testBinaryLongMessage", testBinaryLongMessage),
+            ("testBinaryLongMessage", testBinaryLongMessage),
             ("testBinaryMediumMessage", testBinaryMediumMessage),
+            ("testBinaryShortMessage", testBinaryShortMessage),
+            ("testPing", testPing),
+            ("testTextLongMessage", testTextLongMessage),
+            ("testTextMediumMessage", testTextMediumMessage),
+            ("testTextShortMessage", testTextShortMessage),
+            ("testUserDefinedCloseCode", testUserDefinedCloseCode),
+            ("testUserCloseMessage", testUserCloseMessage),
         ]
     }
     
@@ -64,4 +71,110 @@ class BasicTests: KituraTest {
                              expectation: expectation)
         }   
     }   
+
+    func testBinaryShortMessage() {
+        register(closeReason: .noReasonCodeSent)
+
+        performServerTest() { expectation in
+
+            var bytes = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e]
+            let binaryPayload = NSMutableData(bytes: &bytes, length: bytes.count)
+
+            self.performTest(framesToSend: [(true, self.opcodeBinary, binaryPayload)],
+                             expectedFrames: [(true, self.opcodeBinary, binaryPayload)],
+                             expectation: expectation)
+        }
+    }
+
+    func testPing() {
+        register(closeReason: .noReasonCodeSent)
+
+        performServerTest() { expectation in
+
+            let pingPayload = NSData()
+
+            self.performTest(framesToSend: [(true, self.opcodePing, pingPayload)],
+                             expectedFrames: [(true, self.opcodePong, pingPayload)],
+                             expectation: expectation)
+        }
+    }
+
+    func testTextLongMessage() {
+        register(closeReason: .noReasonCodeSent)
+    
+        performServerTest() { expectation in
+    
+            var text = "Testing, testing 1, 2, 3."
+            repeat {
+                text += " " + text
+            } while text.count < 100000
+            let textPayload = self.payload(text: text)
+    
+            self.performTest(framesToSend: [(true, self.opcodeText, textPayload)],
+                             expectedFrames: [(true, self.opcodeText, textPayload)],
+                             expectation: expectation)
+        }   
+    }   
+
+    func testTextMediumMessage() {
+        register(closeReason: .noReasonCodeSent)
+    
+        performServerTest() { expectation in
+    
+            var text = ""
+            repeat {
+                text += "Testing, testing 1,2,3. "
+            } while text.count < 1000
+            let textPayload = self.payload(text: text)
+    
+            self.performTest(framesToSend: [(true, self.opcodeText, textPayload)],
+                             expectedFrames: [(true, self.opcodeText, textPayload)],
+                             expectation: expectation)
+        }   
+    }   
+    
+    func testTextShortMessage() {
+        register(closeReason: .noReasonCodeSent)
+
+        performServerTest() { expectation in
+
+            let textPayload = self.payload(text: "Testing, testing 1,2,3")
+
+            self.performTest(framesToSend: [(true, self.opcodeText, textPayload)],
+                             expectedFrames: [(true, self.opcodeText, textPayload)],
+                             expectation: expectation)
+        }
+    }
+
+    func testUserDefinedCloseCode() {
+        register(closeReason: .userDefined(65535))
+    
+        performServerTest() { expectation in
+    
+            let closePayload = self.payload(closeReasonCode: .userDefined(65535))
+            let returnPayload = self.payload(closeReasonCode: .userDefined(65535))
+    
+            self.performTest(framesToSend: [(true, self.opcodeClose, closePayload)],
+                             expectedFrames: [(true, self.opcodeClose, returnPayload)],
+                             expectation: expectation)
+        }   
+    }   
+    
+    func testUserCloseMessage() {
+        register(closeReason: .normal)
+    
+        performServerTest() { expectation in
+            let testString = "Testing, 1,2,3"
+            let dataPayload = testString.data(using: String.Encoding.utf8)!
+            let payload = NSMutableData()
+            let closeReasonCode = self.payload(closeReasonCode: .normal)
+            payload.append(closeReasonCode.bytes, length: closeReasonCode.length)
+            payload.append(dataPayload)
+    
+            self.performTest(framesToSend: [(true, self.opcodeClose, payload)],
+                             expectedFrames: [(true, self.opcodeClose, payload)],
+                             expectation: expectation)
+        }   
+    }   
+
 }

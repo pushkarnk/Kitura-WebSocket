@@ -120,7 +120,6 @@ extension WebSocketConnection: ChannelInboundHandler {
                 }
 
                 if frame.fin {
-                    print("firing from here")
                     fireReceivedData(data: frame.unmaskedData.getData(at: 0, length: frame.unmaskedData.readableBytes) ?? Data())
                 } else {
                     message =  ctx.channel.allocator.buffer(capacity: frame.unmaskedData.readableBytes)
