@@ -153,7 +153,7 @@ extension WebSocketConnection: ChannelInboundHandler {
                     let reasonCode: WebSocketErrorCode
                     var description: String? = nil
                     if frame.length >= 2 && frame.length < 126 {
-                        var frameData = frame.data
+                        var frameData = frame.unmaskedData
                         reasonCode = frameData.readWebSocketErrorCode() ?? WebSocketErrorCode.unknown(0) //TODO: what's a default value for error code?
                         description = getDescription(from: frameData)
                         if description == nil {
@@ -207,7 +207,7 @@ extension WebSocketConnection: ChannelInboundHandler {
     private func getDescription(from buffer: ByteBuffer) -> String? {
         var _buffer = buffer
         let readableBytes = _buffer.readableBytes
-        guard readableBytes > 0 else { return nil }
+        guard readableBytes >= 0 else { return nil }
         return _buffer.readString(length: readableBytes)
     }
 }

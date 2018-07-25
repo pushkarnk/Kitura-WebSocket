@@ -34,6 +34,7 @@ class BasicTests: KituraTest {
             ("testTextShortMessage", testTextShortMessage),
             ("testUserDefinedCloseCode", testUserDefinedCloseCode),
             ("testUserCloseMessage", testUserCloseMessage),
+            ("testNullCharacter", testNullCharacter),
         ]
     }
     
@@ -173,6 +174,19 @@ class BasicTests: KituraTest {
     
             self.performTest(framesToSend: [(true, self.opcodeClose, payload)],
                              expectedFrames: [(true, self.opcodeClose, payload)],
+                             expectation: expectation)
+        }   
+    }   
+
+    func testNullCharacter() {
+        register(closeReason: .noReasonCodeSent)
+    
+        performServerTest() { expectation in
+    
+            let textPayload = self.payload(text: "\u{00}")
+    
+            self.performTest(framesToSend: [(true, self.opcodeText, textPayload)],
+                             expectedFrames: [(true, self.opcodeText, textPayload)],
                              expectation: expectation)
         }   
     }   
