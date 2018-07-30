@@ -95,8 +95,13 @@ extension WebSocketConnection: ChannelInboundHandler {
     }
 
     public func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
-        print("channelRead")
         let frame = self.unwrapInboundIn(data)
+
+        if case .unknownControl(let opCode) = frame.opcode {
+            closeConnection(reason: .protocolError, description: "Parsed a frame with an invalid operation code of \(opCode)", hard: true)
+            return
+        }
+
         switch frame.opcode {
             case .text:
                 guard messageState == .unknown else {
@@ -163,17 +168,16 @@ extension WebSocketConnection: ChannelInboundHandler {
                     var description: String? = nil
                     if frame.length >= 2 && frame.length < 126 {
                         var frameData = frame.unmaskedData
-                        reasonCode = frameData.readWebSocketErrorCode() ?? WebSocketErrorCode.unknown(0) //TODO: what's a default value for error code?
+                        reasonCode = frameData.readWebSocketErrorCode()?.protocolErrorIfInvalid() ?? WebSocketErrorCode.unknown(0)
                         description = frameData.getString(at: 0, length: frameData.readableBytes, encoding: .utf8) 
                         if description == nil {
-                            print("closeConnection here")
                             closeConnection(reason: .dataInconsistentWithMessage, description: "Failed to convert received close message to UTF-8 String", hard: true)
                             return
                         }
                     } else if frame.length == 0 {
                         reasonCode = .normalClosure
                     } else {
-                        connectionClosed(reason: .protocolError, description: "Close frames, that have a payload, must be between 2 and 125 octets inclusive")
+                        connectionClosed(reason: .protocolError, description: "Close frames, which contain a payload, must be between 2 and 125 octets inclusive")
                         return
                     }
                     connectionClosed(reason: reasonCode, description: description)
@@ -202,7 +206,6 @@ extension WebSocketConnection: ChannelInboundHandler {
     }
 
     public func errorCaught(ctx: ChannelHandlerContext, error: Error) {
-        print("error", error)
         guard let error = error as? NIOWebSocketError else { return }
         switch error {
         case .multiByteControlFrameLength:
@@ -311,3 +314,14 @@ extension WebSocketCloseReasonCode {
         }
     }
 }
+
+extension WebSocketErrorCode {
+    func protocolErrorIfInvalid() -> WebSocketErrorCode {
+        //https://github.com/IBM-Swift/Kitura-WebSocket/pull/36
+        if case .unknown(let code) = self, code < 3000 {
+            return .protocolError
+        }
+        return self
+    }
+}
+        
