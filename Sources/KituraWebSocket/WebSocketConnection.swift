@@ -95,6 +95,7 @@ extension WebSocketConnection: ChannelInboundHandler {
     }
 
     public func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
+        print("channelRead")
         let frame = self.unwrapInboundIn(data)
         switch frame.opcode {
             case .text:
@@ -103,10 +104,13 @@ extension WebSocketConnection: ChannelInboundHandler {
                     return
                 }
                 
-                if frame.fin {
-                    var data = frame.unmaskedData
-                    let text = data.readString(length: data.readableBytes) ?? ""
-                    fireReceivedString(message: text)
+                if frame.fin { 
+                    let data = unmaskedData(frame: frame)
+                    if let text = data.getString(at: 0, length: data.readableBytes, encoding: .utf8) {
+                        fireReceivedString(message: text)
+                    } else {
+                        closeConnection(reason: .dataInconsistentWithMessage, description: "Failed to convert received payload to UTF-8 String", hard: true)
+                    }
                 } else {
                     message =  ctx.channel.allocator.buffer(capacity: frame.unmaskedData.readableBytes)
                     var buffer = frame.unmaskedData
@@ -142,7 +146,11 @@ extension WebSocketConnection: ChannelInboundHandler {
                     case .binary:
                         fireReceivedData(data: message.getData(at: 0, length: message.readableBytes) ?? Data())
                     case .text:
-                        fireReceivedString(message: message.getString(at: 0, length: message.readableBytes) ?? "") 
+                        if let text = message.getString(at: 0, length: message.readableBytes) {
+                            fireReceivedString(message: text)
+                        } else {
+                            connectionClosed(reason: .dataInconsistentWithMessage, description: "Failed to convert received payload to UTF-8 String")
+                        }
                     case .unknown: //not possible
                         break
                     }
@@ -156,10 +164,10 @@ extension WebSocketConnection: ChannelInboundHandler {
                     if frame.length >= 2 && frame.length < 126 {
                         var frameData = frame.unmaskedData
                         reasonCode = frameData.readWebSocketErrorCode() ?? WebSocketErrorCode.unknown(0) //TODO: what's a default value for error code?
-                        description = getDescription(from: frameData)
+                        description = frameData.getString(at: 0, length: frameData.readableBytes, encoding: .utf8) 
                         if description == nil {
-                            closeConnection(reason: .dataInconsistentWithMessage, 
-				description: "Failed to convert received close message to UTF-8 String", hard: true)
+                            print("closeConnection here")
+                            closeConnection(reason: .dataInconsistentWithMessage, description: "Failed to convert received close message to UTF-8 String", hard: true)
                             return
                         }
                     } else if frame.length == 0 {
@@ -194,7 +202,15 @@ extension WebSocketConnection: ChannelInboundHandler {
     }
 
     public func errorCaught(ctx: ChannelHandlerContext, error: Error) {
-        print("errorCaught \(error)")
+        print("error", error)
+        guard let error = error as? NIOWebSocketError else { return }
+        switch error {
+        case .multiByteControlFrameLength:
+            connectionClosed(reason: .protocolError, description: "Control frames are only allowed to have payload up to and including 125 octets")
+        case .fragmentedControlFrame:
+            connectionClosed(reason: .protocolError, description: "Control frames must not be fragmented")
+        default: break
+        }
     }
 
     private func unmaskedData(frame: WebSocketFrame) -> ByteBuffer {
@@ -216,7 +232,7 @@ extension WebSocketConnection: ChannelInboundHandler {
 extension WebSocketConnection {
 
     func connectionClosed(reason: WebSocketErrorCode, description: String? = nil, reasonToSendBack: WebSocketErrorCode? = nil) {
-        if ctx.channel.isActive {
+        if ctx.channel.isWritable {
              closeConnection(reason: reasonToSendBack ?? reason, description: description, hard: true)
              fireDisconnected(reason: reason)
         } else {
@@ -225,8 +241,7 @@ extension WebSocketConnection {
     }
 
     func sendMessage(with opcode: WebSocketOpcode, data: ByteBuffer) {
-        print(opcode, data.readableBytes)
-        guard ctx.channel.isActive else { 
+        guard ctx.channel.isWritable else { 
             //TODO: Log an error
             return
         }
@@ -246,7 +261,6 @@ extension WebSocketConnection {
          if let description = description {
              data.write(string: description)
          }
-
          let frame = WebSocketFrame(fin: true, opcode: .connectionClose, data: data)
          ctx.writeAndFlush(self.wrapOutboundOut(frame)).whenComplete {
              if hard {

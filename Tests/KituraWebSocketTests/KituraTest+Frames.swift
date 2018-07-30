@@ -1,4 +1,5 @@
 /**
+         irint(data.getBytes(at: 0, length: data.readableBytes))
  * Copyright IBM Corporation 2016
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -182,6 +183,7 @@ class WebSocketClientHandler: ChannelInboundHandler {
 
     func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
         var buffer = self.unwrapInboundIn(data)
+        print(buffer)
         decodeFrame(from: buffer)
     }
 
