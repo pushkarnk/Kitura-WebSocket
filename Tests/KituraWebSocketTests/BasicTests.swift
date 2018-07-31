@@ -28,7 +28,11 @@ class BasicTests: KituraTest {
             ("testBinaryLongMessage", testBinaryLongMessage),
             ("testBinaryMediumMessage", testBinaryMediumMessage),
             ("testBinaryShortMessage", testBinaryShortMessage),
+            ("testGracefullClose", testGracefullClose),
             ("testPing", testPing),
+            ("testPingWithText", testPingWithText),
+            ("testServerRequest", testServerRequest),
+            ("testSuccessfulUpgrade", testSuccessfulUpgrade),
             ("testTextLongMessage", testTextLongMessage),
             ("testTextMediumMessage", testTextMediumMessage),
             ("testTextShortMessage", testTextShortMessage),
@@ -87,6 +91,17 @@ class BasicTests: KituraTest {
         }
     }
 
+    func testGracefullClose() {
+        register(closeReason: .normal)
+    
+        performServerTest() { expectation in
+            let sendPayload = self.payload(closeReasonCode: .normal)
+            self.performTest(framesToSend: [(true, self.opcodeClose, sendPayload)],
+                             expectedFrames: [(true, self.opcodeClose, sendPayload)],
+                             expectation: expectation)
+        }   
+    }  
+
     func testPing() {
         register(closeReason: .noReasonCodeSent)
 
@@ -99,6 +114,54 @@ class BasicTests: KituraTest {
                              expectation: expectation)
         }
     }
+
+    func testPingWithText() {
+        register(closeReason: .noReasonCodeSent)
+    
+        performServerTest() { expectation in
+    
+            let pingPayload = self.payload(text: "Testing, testing 1,2,3")
+    
+            self.performTest(framesToSend: [(true, self.opcodePing, pingPayload)],
+                             expectedFrames: [(true, self.opcodePong, pingPayload)],
+                             expectation: expectation)
+        }   
+    }   
+
+    func testServerRequest() {
+        register(closeReason: .noReasonCodeSent, testServerRequest: true)
+    
+        performServerTest() { expectation in
+            let connected = DispatchSemaphore(value: 0)
+            guard let _ = self.sendUpgradeRequest(toPath: self.servicePath, usingKey: self.secWebKey, semaphore: connected) else { return }
+            connected.wait()
+    
+            sleep(3)       // Wait a bit for the WebSocketService to test the ServerRequest
+    
+            expectation.fulfill()
+        }   
+    }    
+
+    func testSuccessfulUpgrade() {
+        register(closeReason: .noReasonCodeSent) //with NIOWebSocket, the Websocket handler cannot be added to a listening server
+        performServerTest(asyncTasks: { expectation in
+            self.register(closeReason: .noReasonCodeSent)
+            let upgraded = DispatchSemaphore(value: 0)
+            guard let _ = self.sendUpgradeRequest(toPath: self.servicePath, usingKey: self.secWebKey, semaphore: upgraded) else { return }
+            upgraded.wait()
+            expectation.fulfill()
+        },
+        { expectation in
+            let upgraded = DispatchSemaphore(value: 0)
+            WebSocket.unregister(path: self.servicePathNoSlash)
+            self.register(onPath: self.servicePathNoSlash, closeReason: .noReasonCodeSent)
+            guard let _ = self.sendUpgradeRequest(toPath: self.servicePath, usingKey: self.secWebKey, semaphore: upgraded) else { return }
+            upgraded.wait()
+            expectation.fulfill()
+        })
+    }
+
+
 
     func testTextLongMessage() {
         register(closeReason: .noReasonCodeSent)

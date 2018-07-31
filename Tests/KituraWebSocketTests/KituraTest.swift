@@ -177,6 +177,7 @@ class HTTPResponseHandler: ChannelInboundHandler {
         switch response {
         case .head(let header):
             let statusCode = HTTPStatusCode(rawValue: Int(header.status.code))!
+            print(statusCode)
             let secWebSocketAccept = header.headers["Sec-WebSocket-Accept"]
             if testSuccess {
                 KituraTest.checkUpgradeResponse(statusCode, secWebSocketAccept[0], key)

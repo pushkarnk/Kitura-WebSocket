@@ -110,7 +110,6 @@ extension KituraTest {
         if payloadLength < 126 {
             bytes[1] = UInt8(payloadLength)
             length += 1
-            //bytes = Array(bytes[0...1])
         } else if payloadLength <= Int(UInt16.max) {
             bytes[1] = 126
             let tempPayloadLengh = UInt16(payloadLength)
@@ -127,7 +126,6 @@ extension KituraTest {
             (UnsafeMutableRawPointer(mutating: bytes)+length+1).copyBytes(from: asBytes, count: 2)
             #endif
             length += 3
-            //bytes = Array(bytes[0...3])
         } else {
             bytes[1] = 127
             let tempPayloadLengh = UInt32(payloadLength)
@@ -206,6 +204,7 @@ class WebSocketClientHandler: ChannelInboundHandler {
         if currentFramePayload.count == currentFrameLength {
             let currentFramePayloadPtr = UnsafeBufferPointer(start: &currentFramePayload, count: currentFramePayload.count)
             let currentPayloadData = NSData(data: Data(buffer: currentFramePayloadPtr))
+
             compareFrames(frameNumber, currentFrameFinal, currentFrameOpcode, currentPayloadData)
             frameNumber += 1
             firstFragment.toggle()

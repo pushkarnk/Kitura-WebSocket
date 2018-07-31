@@ -25,11 +25,13 @@ public class WSConnectionUpgradeFactory: ProtocolHandlerFactory {
     public let name = "websocket"
 
     init() {
+        print("initing factory")
         ConnectionUpgrader.register(handlerFactory: self)
     }
 
     public func handler(for request: ServerRequest) -> ChannelHandler {
         let wsRequest = WSServerRequest(request: request)
+        print("wsRequest.urlURL.path", wsRequest.urlURL.path)
         let service = registry[wsRequest.urlURL.path]
 
         let connection = WebSocketConnection(request: wsRequest)
@@ -47,6 +49,7 @@ public class WSConnectionUpgradeFactory: ProtocolHandlerFactory {
             path = "/" + onPath
         }
         registry[path] = service
+        print(path, registry[path])
     }
 
     func unregister(path thePath: String) {
