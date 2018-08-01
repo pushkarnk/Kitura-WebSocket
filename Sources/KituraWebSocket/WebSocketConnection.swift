@@ -169,7 +169,7 @@ extension WebSocketConnection: ChannelInboundHandler {
                     if frame.length >= 2 && frame.length < 126 {
                         var frameData = frame.unmaskedData
                         reasonCode = frameData.readWebSocketErrorCode()?.protocolErrorIfInvalid() ?? WebSocketErrorCode.unknown(0)
-                        description = frameData.getString(at: 0, length: frameData.readableBytes, encoding: .utf8) 
+                        description = frameData.getString(at: frameData.readerIndex, length: frameData.readableBytes, encoding: .utf8) 
                         if description == nil {
                             closeConnection(reason: .dataInconsistentWithMessage, description: "Failed to convert received close message to UTF-8 String", hard: true)
                             return

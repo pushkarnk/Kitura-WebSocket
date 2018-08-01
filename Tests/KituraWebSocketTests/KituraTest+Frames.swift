@@ -181,7 +181,6 @@ class WebSocketClientHandler: ChannelInboundHandler {
 
     func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
         var buffer = self.unwrapInboundIn(data)
-        print(buffer)
         decodeFrame(from: buffer)
     }
 

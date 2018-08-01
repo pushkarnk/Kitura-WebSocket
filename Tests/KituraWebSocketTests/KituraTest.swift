@@ -34,7 +34,7 @@ class KituraTest: XCTestCase {
     
     override func setUp() {
         super.setUp()
-        KituraTest.initOnce
+        //KituraTest.initOnce
     }
     
     private static var wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -98,8 +98,8 @@ class KituraTest: XCTestCase {
         WebSocket.register(service: service, onPath: onPath ?? servicePath)
     }
     
-    func sendUpgradeRequest(forProtocolVersion: String? = "13", toPath: String, usingKey: String?, semaphore: DispatchSemaphore) -> Channel? {
-        self.httpHandler = HTTPResponseHandler(testSuccess: true, key: usingKey!, semaphore: semaphore)
+    func sendUpgradeRequest(forProtocolVersion: String? = "13", toPath: String, usingKey: String?, semaphore: DispatchSemaphore, errorMessage: String? = nil) -> Channel? {
+        self.httpHandler = HTTPResponseHandler(key: usingKey ?? "", semaphore: semaphore, errorMessage: errorMessage)
         let clientBootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup(numberOfThreads: 1))
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEPORT), value: 1)
             .channelInitializer { channel in
@@ -147,6 +147,11 @@ class KituraTest: XCTestCase {
                        "The Sec-WebSocket-Accept header value was [\(secWebAccept)] and not the expected value of [\(secWebAcceptExpected)]")
     }
 
+    static func checkUpgradeFailureResponse(_ httpStatusCode: HTTPStatusCode, _ errorMessage: String) {
+        XCTAssertEqual(httpStatusCode, HTTPStatusCode.badRequest,
+                       "Returned status code on upgrade request was \(httpStatusCode) and not \(HTTPStatusCode.badRequest)")
+    }
+
     func expectation(line: Int, index: Int) -> XCTestExpectation {
         return self.expectation(description: "\(type(of: self)):\(line)[\(index)]")
     }
@@ -156,19 +161,16 @@ class HTTPResponseHandler: ChannelInboundHandler {
 
     public typealias InboundIn = HTTPClientResponsePart
 
-    let testFailure: Bool
-
-    let testSuccess: Bool
+    let errorMessage: String? 
 
     let key: String
 
-    let upgradeDone: DispatchSemaphore
+    let upgradeDoneOrRefused: DispatchSemaphore
 
-    public init(testSuccess: Bool = false, testFailure: Bool = false, key: String, semaphore: DispatchSemaphore) {
-        self.testSuccess = testSuccess
-        self.testFailure = testFailure
+    public init(key: String, semaphore: DispatchSemaphore, errorMessage: String? = nil) {
         self.key = key
-        self.upgradeDone = semaphore
+        self.upgradeDoneOrRefused = semaphore
+        self.errorMessage = errorMessage
     }
 
     func channelRead(ctx: ChannelHandlerContext, data: NIOAny) {
@@ -177,12 +179,13 @@ class HTTPResponseHandler: ChannelInboundHandler {
         switch response {
         case .head(let header):
             let statusCode = HTTPStatusCode(rawValue: Int(header.status.code))!
-            print(statusCode)
             let secWebSocketAccept = header.headers["Sec-WebSocket-Accept"]
-            if testSuccess {
+            if let errorMessage = errorMessage {
+                KituraTest.checkUpgradeFailureResponse(statusCode, errorMessage)
+            } else {
                 KituraTest.checkUpgradeResponse(statusCode, secWebSocketAccept[0], key)
-                upgradeDone.signal()
             }
+            upgradeDoneOrRefused.signal()
         default: break
         }
     }   

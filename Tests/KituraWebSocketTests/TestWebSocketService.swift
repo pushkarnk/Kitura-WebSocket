@@ -84,12 +84,10 @@ class TestWebSocketService: WebSocketService {
     }
     
     public func received(message: Data, from: WebSocketConnection) {
-        print("Received a binary message of length \(message.count)")
         from.send(message: message)
     }
     
     public func received(message: String, from: WebSocketConnection) {
-        print("Received a String message of length \(message.count)")
         from.send(message: message)
         
         if message == "close" {
