@@ -58,6 +58,10 @@ public class WSConnectionUpgradeFactory: ProtocolHandlerFactory {
         registry.removeValue(forKey: path)
     }
 
+    public func extensionHandlers(for extensions: [String]) -> [ChannelHandler] {
+        //TODO: extension handlers need to be registered
+        return [WebsocketDeflater(), WebsocketInflater()]
+    }
     public func isServiceRegistered(at path: String) -> Bool {
         return registry[path] != nil
     }
