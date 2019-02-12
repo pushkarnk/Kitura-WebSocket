@@ -10,7 +10,7 @@ class WebsocketDeflater : ChannelOutboundHandler {
 
     private var stream: z_stream = z_stream()
 
-    private var payload: ByteBuffer?
+    var payload: ByteBuffer?
 
     public func write(ctx: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
         let frame = unwrapOutboundIn(data)
@@ -35,7 +35,7 @@ class WebsocketDeflater : ChannelOutboundHandler {
          deflateEnd(&stream)
     }
 
-    private func deflatePayload(allocator: ByteBufferAllocator) -> ByteBuffer? {
+    func deflatePayload(allocator: ByteBufferAllocator) -> ByteBuffer? {
         initializeEncoder()
         defer {
             deinitializeEncoder()

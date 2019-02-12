@@ -63,5 +63,5 @@ XCTMain([
     testCase(ComplexTests.allTests.shuffled()),
     testCase(ProtocolErrorTests.allTests.shuffled()),
     testCase(UpgradeErrors.allTests.shuffled()),
-    testCase(WebSocketDeflater.allTests.shuffled())
+    testCase(WebSocketDeflaterTests.allTests.shuffled())
 ].shuffled())
